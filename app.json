@@ -2,6 +2,7 @@
   "expo": {
     "name": "Record My Athlete",
     "slug": "record-my-athlete",
+    "owner": "alyn-data",
     "scheme": "recordmyathlete",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -62,6 +63,11 @@
     ],
     "experiments": {
       "typedRoutes": false
+    },
+    "extra": {
+      "eas": {
+        "projectId": "1f88037e-5261-496f-83b4-ed0f67f10e8d"
+      }
     }
   }
 }
