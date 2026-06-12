@@ -1,0 +1,73 @@
+{
+  "expo": {
+    "name": "Record My Athlete",
+    "slug": "record-my-athlete",
+    "owner": "alyn-data",
+    "scheme": "recordmyathlete",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "assetBundlePatterns": ["**/*"],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.alyndata.recordmyathlete",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Record My Athlete uses the camera to record your athlete's games.",
+        "NSMicrophoneUsageDescription": "Record My Athlete records audio along with your game videos.",
+        "NSPhotoLibraryUsageDescription": "Import existing game videos to tag stats and create highlight clips."
+      }
+    },
+    "android": {
+      "package": "com.alyndata.recordmyathlete",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1220"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_MEDIA_VIDEO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#0B1220"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Record My Athlete uses the camera to record your athlete's games.",
+          "microphonePermission": "Record My Athlete records audio along with your game videos.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Import existing game videos to tag stats and create highlight clips."
+        }
+      ],
+      "expo-video"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "eas": {
+        "projectId": "1f88037e-5261-496f-83b4-ed0f67f10e8d"
+      }
+    }
+  }
+}
