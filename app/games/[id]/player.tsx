@@ -1,28 +1,82 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../../src/components/Button';
 import { EmptyState } from '../../../src/components/EmptyState';
 import { useStore } from '../../../src/store/StoreContext';
 import { useClip, useVideo } from '../../../src/store/selectors';
+import { Clip, Video } from '../../../src/store/types';
 import { colors, font, radius, spacing } from '../../../src/theme';
 import { formatDuration } from '../../../src/util/format';
+import { resolveVideoUri } from '../../../src/util/videoStorage';
 
 export default function PlayerScreen() {
-  const { id, clipId, videoId } = useLocalSearchParams<{
-    id: string;
-    clipId?: string;
-    videoId?: string;
-  }>();
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const { data, addClip, updateClip } = useStore();
+  const { clipId, videoId } = useLocalSearchParams<{ clipId?: string; videoId?: string }>();
 
   const clip = useClip(clipId);
   const directVideo = useVideo(videoId);
   const video = useVideo(clip?.videoId) ?? directVideo;
+
+  const [resolvedUri, setResolvedUri] = useState<string | null>(null);
+
+  // Resolve idb:<id> (web blobs) into a playable URL; native URIs pass through.
+  useEffect(() => {
+    let active = true;
+    if (!video?.uri) {
+      setResolvedUri(null);
+      return;
+    }
+    resolveVideoUri(video.uri).then((u) => {
+      if (active) setResolvedUri(u);
+    });
+    return () => {
+      active = false;
+    };
+  }, [video?.uri]);
+
+  if (!video) {
+    return (
+      <View style={styles.container}>
+        <EmptyState icon="🎞️" title="Video not found" message="It may have been deleted." />
+      </View>
+    );
+  }
+
+  if (video.uri && !resolvedUri) {
+    return (
+      <View style={[styles.container, styles.loading]}>
+        <ActivityIndicator color={colors.white} />
+      </View>
+    );
+  }
+
+  return (
+    <PlayerInner
+      key={resolvedUri ?? 'empty'}
+      uri={resolvedUri ?? ''}
+      clip={clip}
+      video={video}
+      directVideo={directVideo}
+    />
+  );
+}
+
+function PlayerInner({
+  uri,
+  clip,
+  video,
+  directVideo,
+}: {
+  uri: string;
+  clip?: Clip;
+  video: Video;
+  directVideo?: Video;
+}) {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { data, addClip, updateClip } = useStore();
 
   const startSec = clip ? clip.startMs / 1000 : 0;
   const endSec = clip ? clip.endMs / 1000 : undefined;
@@ -30,12 +84,11 @@ export default function PlayerScreen() {
   const seekedRef = useRef(false);
   const [creating, setCreating] = useState(false);
 
-  const player = useVideoPlayer(video?.uri ?? null, (p) => {
+  const player = useVideoPlayer(uri || null, (p) => {
     p.timeUpdateEventInterval = 0.25;
     p.loop = false;
   });
 
-  // Seek to the clip start once the media is ready, then play.
   useEffect(() => {
     if (!player) return;
     const sub = player.addListener('statusChange', ({ status }) => {
@@ -48,7 +101,6 @@ export default function PlayerScreen() {
     return () => sub.remove();
   }, [player, clip, startSec]);
 
-  // For clips, stop playback when we reach the end of the range.
   useEffect(() => {
     if (!player || endSec === undefined) return;
     const sub = player.addListener('timeUpdate', ({ currentTime }) => {
@@ -57,6 +109,13 @@ export default function PlayerScreen() {
     return () => sub.remove();
   }, [player, endSec]);
 
+  // Revoke object URLs created for web blobs when leaving.
+  useEffect(() => {
+    return () => {
+      if (uri.startsWith('blob:')) URL.revokeObjectURL(uri);
+    };
+  }, [uri]);
+
   const replay = () => {
     if (!player) return;
     player.currentTime = startSec;
@@ -64,7 +123,7 @@ export default function PlayerScreen() {
   };
 
   const clipThisMoment = () => {
-    if (!player || !video) return;
+    if (!player) return;
     setCreating(true);
     const pre = data.settings.preBufferSec * 1000;
     const post = data.settings.postBufferSec * 1000;
@@ -72,9 +131,9 @@ export default function PlayerScreen() {
     const durationMs = (player.duration || 0) * 1000;
     const startMs = Math.max(0, atMs - pre);
     const endMs = durationMs > 0 ? Math.min(durationMs, atMs + post) : atMs + post;
-    const count = data.clips.filter((c) => c.gameId === id).length + 1;
+    const count = data.clips.filter((c) => c.gameId === video.gameId).length + 1;
     addClip({
-      gameId: id,
+      gameId: video.gameId,
       videoId: video.id,
       startMs,
       endMs: endMs > startMs ? endMs : startMs + 1000,
@@ -89,24 +148,24 @@ export default function PlayerScreen() {
     return 'Playback';
   }, [clip, directVideo]);
 
-  if (!video) {
-    return (
-      <View style={styles.container}>
-        <EmptyState icon="🎞️" title="Video not found" message="It may have been deleted." />
-      </View>
-    );
-  }
+  const missingFile = !uri;
 
   return (
     <View style={styles.container}>
       <View style={styles.videoWrap}>
-        <VideoView
-          player={player}
-          style={styles.video}
-          contentFit="contain"
-          allowsFullscreen
-          nativeControls
-        />
+        {missingFile ? (
+          <View style={styles.loading}>
+            <Text style={styles.noFile}>No video file for this recording.</Text>
+          </View>
+        ) : (
+          <VideoView
+            player={player}
+            style={styles.video}
+            contentFit="contain"
+            allowsFullscreen
+            nativeControls
+          />
+        )}
       </View>
 
       <View style={[styles.panel, { paddingBottom: insets.bottom + spacing.lg }]}>
@@ -119,7 +178,13 @@ export default function PlayerScreen() {
               {clip.watched ? '  ·  watched' : ''}
             </Text>
             <View style={styles.row}>
-              <Button title="↺ Replay clip" variant="secondary" style={{ flex: 1 }} onPress={replay} />
+              <Button
+                title="↺ Replay clip"
+                variant="secondary"
+                style={{ flex: 1 }}
+                onPress={replay}
+                disabled={missingFile}
+              />
               <Button
                 title={clip.watched ? 'Mark unwatched' : 'Mark watched'}
                 style={{ flex: 1 }}
@@ -135,7 +200,7 @@ export default function PlayerScreen() {
             <Button
               title={creating ? '★ Saved!' : '★ Clip this moment'}
               onPress={clipThisMoment}
-              disabled={creating}
+              disabled={creating || missingFile}
             />
             <Pressable onPress={() => router.back()} style={styles.back}>
               <Text style={styles.backText}>Done</Text>
@@ -149,6 +214,8 @@ export default function PlayerScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.dark },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  noFile: { color: '#CBD5E1', fontSize: font.body, padding: spacing.xl, textAlign: 'center' },
   videoWrap: { flex: 1, backgroundColor: '#000' },
   video: { flex: 1 },
   panel: {

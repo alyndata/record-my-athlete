@@ -41,3 +41,8 @@ export async function deleteVideoFile(uri: string): Promise<void> {
     console.warn('deleteVideoFile failed', err);
   }
 }
+
+/** On native a local file URI is already playable; nothing to resolve. */
+export async function resolveVideoUri(uri: string): Promise<string> {
+  return uri;
+}
