@@ -72,7 +72,18 @@ export async function deleteVideoFile(uri: string): Promise<void> {
   }
 }
 
-/** Imported videos on web already have a usable URI; nothing to copy. */
+/**
+ * Persist an imported video. The picker hands us a temporary object/data URL,
+ * so we read it into a Blob and store it in IndexedDB — otherwise it would
+ * break on reload. Returns an `idb:<id>` URI.
+ */
 export async function persistVideo(sourceUri: string): Promise<string> {
-  return sourceUri;
+  try {
+    const resp = await fetch(sourceUri);
+    const blob = await resp.blob();
+    return await putVideoBlob(blob);
+  } catch (err) {
+    console.warn('persistVideo (web) failed, using source uri', err);
+    return sourceUri;
+  }
 }
