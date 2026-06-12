@@ -34,6 +34,16 @@ export function StatSummary({ stats }: { stats: GameStats }) {
         <Line label="3-Pointers" made={stats.fg3.made} attempts={stats.fg3.attempts} />
         <Line label="Field Goals" made={stats.fg.made} attempts={stats.fg.attempts} />
       </View>
+      <View style={styles.counters}>
+        <View style={styles.counterBox}>
+          <Text style={styles.counterValue}>{stats.rebounds}</Text>
+          <Text style={styles.counterLabel}>REBOUNDS</Text>
+        </View>
+        <View style={styles.counterBox}>
+          <Text style={styles.counterValue}>{stats.assists}</Text>
+          <Text style={styles.counterLabel}>ASSISTS</Text>
+        </View>
+      </View>
     </View>
   );
 }
@@ -81,4 +91,24 @@ const styles = StyleSheet.create({
   lineLabel: { flex: 2, fontSize: font.small, color: colors.text, fontWeight: '600' },
   lineValue: { flex: 1, fontSize: font.small, color: colors.text, textAlign: 'center' },
   linePct: { flex: 1, fontSize: font.small, color: colors.muted, textAlign: 'right' },
+  counters: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.md,
+  },
+  counterBox: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+  },
+  counterValue: { fontSize: font.h1, fontWeight: '800', color: colors.text },
+  counterLabel: {
+    fontSize: font.tiny,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: colors.muted,
+    marginTop: 2,
+  },
 });

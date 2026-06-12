@@ -12,6 +12,8 @@ export interface GameStats {
   fg3: ShotLine;
   /** Combined field goals (2PT + 3PT). */
   fg: ShotLine;
+  rebounds: number;
+  assists: number;
 }
 
 const emptyLine = (): ShotLine => ({ made: 0, attempts: 0 });
@@ -24,6 +26,8 @@ export function computeStats(events: StatEvent[]): GameStats {
     fg2: emptyLine(),
     fg3: emptyLine(),
     fg: emptyLine(),
+    rebounds: 0,
+    assists: 0,
   };
 
   for (const ev of events) {
@@ -57,6 +61,12 @@ export function computeStats(events: StatEvent[]): GameStats {
       case 'fg3_missed':
         stats.fg3.attempts++;
         stats.fg.attempts++;
+        break;
+      case 'rebound':
+        stats.rebounds++;
+        break;
+      case 'assist':
+        stats.assists++;
         break;
     }
   }

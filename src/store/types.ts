@@ -6,7 +6,9 @@ export type StatType =
   | 'fg2_made'
   | 'fg2_missed'
   | 'fg3_made'
-  | 'fg3_missed';
+  | 'fg3_missed'
+  | 'rebound'
+  | 'assist';
 
 export interface Athlete {
   id: string;
