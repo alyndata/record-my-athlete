@@ -19,6 +19,18 @@ export const SHOT_KINDS: ShotKind[] = [
 
 export const MADE_TYPES: StatType[] = ['ft_made', 'fg2_made', 'fg3_made'];
 
+/** Single-tap counter stats (not make/miss shots). */
+export interface CounterStat {
+  type: StatType;
+  label: string;
+  short: string;
+}
+
+export const COUNTER_STATS: CounterStat[] = [
+  { type: 'rebound', label: 'Rebound', short: 'REB' },
+  { type: 'assist', label: 'Assist', short: 'AST' },
+];
+
 const POINTS_BY_TYPE: Record<StatType, number> = {
   ft_made: 1,
   ft_missed: 0,
@@ -26,6 +38,8 @@ const POINTS_BY_TYPE: Record<StatType, number> = {
   fg2_missed: 0,
   fg3_made: 3,
   fg3_missed: 0,
+  rebound: 0,
+  assist: 0,
 };
 
 export function pointsForType(type: StatType): number {
@@ -43,6 +57,8 @@ const LABELS: Record<StatType, string> = {
   fg2_missed: 'Missed 2-Pointer',
   fg3_made: 'Made 3-Pointer',
   fg3_missed: 'Missed 3-Pointer',
+  rebound: 'Rebound',
+  assist: 'Assist',
 };
 
 export function labelForType(type: StatType): string {

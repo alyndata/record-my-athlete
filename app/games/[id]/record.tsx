@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -12,7 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../../src/components/Button';
 import { computeStats } from '../../../src/domain/stats';
-import { SHOT_KINDS } from '../../../src/domain/statTypes';
+import { COUNTER_STATS, SHOT_KINDS } from '../../../src/domain/statTypes';
 import { useStore } from '../../../src/store/StoreContext';
 import { useGame } from '../../../src/store/selectors';
 import { StatType } from '../../../src/store/types';
@@ -41,6 +42,11 @@ export default function RecordScreen() {
 
   const cameraRef = useRef<CameraView>(null);
   const [cameraReady, setCameraReady] = useState(false);
+
+  // The web build can't do native video recording, so it runs a "practice
+  // mode": the stat/favorite/timer/pause controls all work for trying out the
+  // workflow, but no video file is captured. Real recording is phone-only.
+  const isWeb = Platform.OS === 'web';
 
   // "recording" = a segment is actively capturing.
   const [recording, setRecording] = useState(false);
@@ -85,14 +91,15 @@ export default function RecordScreen() {
 
   /** Persist a finished segment plus its buffered stats and favorite clips. */
   const finalizeSegment = useCallback(
-    async (uri: string) => {
+    async (uri: string | null) => {
       const durationMs = Math.max(0, Date.now() - segmentStartRef.current);
       const stats = [...statBufferRef.current];
       const favs = [...favBufferRef.current];
       statBufferRef.current = [];
       favBufferRef.current = [];
 
-      const storedUri = await persistVideo(uri);
+      // On web there's no captured file; store an empty uri (practice mode).
+      const storedUri = uri ? await persistVideo(uri) : '';
       const video = addVideo({
         gameId: id,
         uri: storedUri,
@@ -123,7 +130,8 @@ export default function RecordScreen() {
 
   /** Begin a new recording segment. */
   const startSegment = useCallback(async () => {
-    if (recordingRef.current || !cameraRef.current) return;
+    if (recordingRef.current) return;
+    if (!isWeb && !cameraRef.current) return;
     recordingRef.current = true;
     segmentStartRef.current = Date.now();
     setRecording(true);
@@ -134,8 +142,11 @@ export default function RecordScreen() {
       setElapsedMs(Date.now() - segmentStartRef.current);
     }, 250);
 
+    // Web practice mode: no native recording; the segment is finalized on stop.
+    if (isWeb) return;
+
     try {
-      const result = await cameraRef.current.recordAsync();
+      const result = await cameraRef.current!.recordAsync();
       // recordAsync resolves once stopRecording() is called.
       if (result?.uri) {
         setSaving(true);
@@ -149,15 +160,22 @@ export default function RecordScreen() {
     } finally {
       recordingRef.current = false;
     }
-  }, [finalizeSegment, stopTimer]);
+  }, [finalizeSegment, stopTimer, isWeb]);
 
   /** Stop the active segment (it gets saved); used for both pause and finish. */
   const stopSegment = useCallback(() => {
     if (!recordingRef.current) return;
     stopTimer();
     setRecording(false);
+    if (isWeb) {
+      // No native recording promise to await; finalize the segment directly.
+      recordingRef.current = false;
+      setSaving(true);
+      finalizeSegment(null).finally(() => setSaving(false));
+      return;
+    }
     cameraRef.current?.stopRecording();
-  }, [stopTimer]);
+  }, [stopTimer, isWeb, finalizeSegment]);
 
   const onTagStat = useCallback(
     (type: StatType, label: string) => {
@@ -197,8 +215,8 @@ export default function RecordScreen() {
     }
   }, [started, onFinish, router]);
 
-  // --- Permission gates ---------------------------------------------------
-  if (!cameraPerm || !micPerm) {
+  // --- Permission gates (native only; web runs in practice mode) ----------
+  if (!isWeb && (!cameraPerm || !micPerm)) {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={colors.white} />
@@ -206,7 +224,7 @@ export default function RecordScreen() {
     );
   }
 
-  if (!cameraPerm.granted || !micPerm.granted) {
+  if (!isWeb && (!cameraPerm!.granted || !micPerm!.granted)) {
     return (
       <View style={styles.center}>
         <Text style={styles.permTitle}>Camera & microphone access</Text>
@@ -216,8 +234,8 @@ export default function RecordScreen() {
         <Button
           title="Grant access"
           onPress={async () => {
-            if (!cameraPerm.granted) await requestCameraPerm();
-            if (!micPerm.granted) await requestMicPerm();
+            if (!cameraPerm?.granted) await requestCameraPerm();
+            if (!micPerm?.granted) await requestMicPerm();
           }}
           style={{ marginTop: spacing.lg, minWidth: 200 }}
         />
@@ -242,13 +260,23 @@ export default function RecordScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        mode="video"
-        facing="back"
-        onCameraReady={() => setCameraReady(true)}
-      />
+      {isWeb ? (
+        <View style={[StyleSheet.absoluteFill, styles.webBackdrop]}>
+          <Text style={styles.webBackdropIcon}>🎥</Text>
+          <Text style={styles.webBackdropText}>
+            Practice mode — try the stat buttons below.{'\n'}Live video recording
+            works in the phone app.
+          </Text>
+        </View>
+      ) : (
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          mode="video"
+          facing="back"
+          onCameraReady={() => setCameraReady(true)}
+        />
+      )}
 
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: insets.top + spacing.sm }]}>
@@ -302,6 +330,19 @@ export default function RecordScreen() {
           ))}
         </View>
 
+        <View style={styles.counterRow}>
+          {COUNTER_STATS.map((c) => (
+            <Pressable
+              key={c.type}
+              disabled={!recording}
+              onPress={() => onTagStat(c.type, `+1 ${c.label}`)}
+              style={[styles.counterBtn, !recording && styles.shotBtnDisabled]}
+            >
+              <Text style={styles.counterBtnText}>+1 {c.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+
         <Pressable
           disabled={!recording}
           onPress={onFavorite}
@@ -313,14 +354,15 @@ export default function RecordScreen() {
         <View style={styles.controls}>
           {!recording ? (
             <Pressable
+              accessibilityLabel={started ? 'Resume recording' : 'Start recording'}
               onPress={startSegment}
-              disabled={!cameraReady || saving}
-              style={[styles.recordBtn, (!cameraReady || saving) && styles.shotBtnDisabled]}
+              disabled={(!isWeb && !cameraReady) || saving}
+              style={[styles.recordBtn, ((!isWeb && !cameraReady) || saving) && styles.shotBtnDisabled]}
             >
               <View style={styles.recordInner} />
             </Pressable>
           ) : (
-            <Pressable onPress={stopSegment} style={styles.pauseBtn}>
+            <Pressable accessibilityLabel="Pause recording" onPress={stopSegment} style={styles.pauseBtn}>
               <View style={styles.pauseInner} />
             </Pressable>
           )}
@@ -338,6 +380,19 @@ export default function RecordScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.dark },
+  webBackdrop: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+    backgroundColor: colors.dark,
+  },
+  webBackdropIcon: { fontSize: 56, marginBottom: spacing.md },
+  webBackdropText: {
+    color: '#CBD5E1',
+    fontSize: font.body,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
   center: {
     flex: 1,
     backgroundColor: colors.dark,
@@ -437,6 +492,16 @@ const styles = StyleSheet.create({
   missBtn: { backgroundColor: colors.danger },
   shotBtnDisabled: { opacity: 0.4 },
   shotBtnText: { color: colors.white, fontWeight: '800', fontSize: font.body },
+
+  counterRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  counterBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    backgroundColor: '#2563EB',
+  },
+  counterBtnText: { color: colors.white, fontWeight: '800', fontSize: font.body },
 
   favBtn: {
     marginTop: spacing.sm,
