@@ -32,3 +32,6 @@ yarn-error.*
 # IDE
 .idea/
 .vscode/
+
+# local preview screenshots
+preview/
