@@ -1,4 +1,4 @@
-import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -12,6 +12,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../../src/components/Button';
+import {
+  CameraRecorder,
+  CameraRecorderHandle,
+} from '../../../src/components/CameraRecorder';
 import { computeStats } from '../../../src/domain/stats';
 import { COUNTER_STATS, SHOT_KINDS } from '../../../src/domain/statTypes';
 import { useStore } from '../../../src/store/StoreContext';
@@ -19,7 +23,6 @@ import { useGame } from '../../../src/store/selectors';
 import { StatType } from '../../../src/store/types';
 import { colors, font, radius, spacing } from '../../../src/theme';
 import { formatDuration } from '../../../src/util/format';
-import { persistVideo } from '../../../src/util/videoStorage';
 
 interface BufferedStat {
   type: StatType;
@@ -40,12 +43,10 @@ export default function RecordScreen() {
   const [cameraPerm, requestCameraPerm] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
 
-  const cameraRef = useRef<CameraView>(null);
+  const recorderRef = useRef<CameraRecorderHandle>(null);
   const [cameraReady, setCameraReady] = useState(false);
 
-  // The web build can't do native video recording, so it runs a "practice
-  // mode": the stat/favorite/timer/pause controls all work for trying out the
-  // workflow, but no video file is captured. Real recording is phone-only.
+  // Native gates on camera/mic permission; web prompts inside the recorder.
   const isWeb = Platform.OS === 'web';
 
   // "recording" = a segment is actively capturing.
@@ -91,18 +92,15 @@ export default function RecordScreen() {
 
   /** Persist a finished segment plus its buffered stats and favorite clips. */
   const finalizeSegment = useCallback(
-    async (uri: string | null) => {
-      const durationMs = Math.max(0, Date.now() - segmentStartRef.current);
+    async (uri: string | null, durationMs: number) => {
       const stats = [...statBufferRef.current];
       const favs = [...favBufferRef.current];
       statBufferRef.current = [];
       favBufferRef.current = [];
 
-      // On web there's no captured file; store an empty uri (practice mode).
-      const storedUri = uri ? await persistVideo(uri) : '';
       const video = addVideo({
         gameId: id,
-        uri: storedUri,
+        uri: uri ?? '',
         durationMs,
         source: 'recorded',
       });
@@ -131,7 +129,6 @@ export default function RecordScreen() {
   /** Begin a new recording segment. */
   const startSegment = useCallback(async () => {
     if (recordingRef.current) return;
-    if (!isWeb && !cameraRef.current) return;
     recordingRef.current = true;
     segmentStartRef.current = Date.now();
     setRecording(true);
@@ -142,40 +139,34 @@ export default function RecordScreen() {
       setElapsedMs(Date.now() - segmentStartRef.current);
     }, 250);
 
-    // Web practice mode: no native recording; the segment is finalized on stop.
-    if (isWeb) return;
-
     try {
-      const result = await cameraRef.current!.recordAsync();
-      // recordAsync resolves once stopRecording() is called.
-      if (result?.uri) {
-        setSaving(true);
-        await finalizeSegment(result.uri);
-        setSaving(false);
-      }
+      await recorderRef.current?.startRecording();
     } catch (err) {
-      console.warn('recordAsync failed', err);
-      Alert.alert('Recording error', 'Something went wrong while recording.');
-      setSaving(false);
-    } finally {
+      console.warn('startRecording failed', err);
+      Alert.alert('Recording error', 'Could not start recording.');
+      stopTimer();
+      setRecording(false);
       recordingRef.current = false;
     }
-  }, [finalizeSegment, stopTimer, isWeb]);
+  }, [stopTimer]);
 
   /** Stop the active segment (it gets saved); used for both pause and finish. */
-  const stopSegment = useCallback(() => {
+  const stopSegment = useCallback(async () => {
     if (!recordingRef.current) return;
+    const durationMs = Math.max(0, Date.now() - segmentStartRef.current);
     stopTimer();
     setRecording(false);
-    if (isWeb) {
-      // No native recording promise to await; finalize the segment directly.
-      recordingRef.current = false;
-      setSaving(true);
-      finalizeSegment(null).finally(() => setSaving(false));
-      return;
+    recordingRef.current = false;
+    setSaving(true);
+    try {
+      const uri = (await recorderRef.current?.stopRecording()) ?? null;
+      await finalizeSegment(uri, durationMs);
+    } catch (err) {
+      console.warn('stopRecording failed', err);
+    } finally {
+      setSaving(false);
     }
-    cameraRef.current?.stopRecording();
-  }, [stopTimer, isWeb, finalizeSegment]);
+  }, [stopTimer, finalizeSegment]);
 
   const onTagStat = useCallback(
     (type: StatType, label: string) => {
@@ -198,10 +189,9 @@ export default function RecordScreen() {
     flashLabel('★ Highlight saved');
   }, [flashLabel]);
 
-  const onFinish = useCallback(() => {
-    stopSegment();
-    // Give the segment a moment to flush before leaving.
-    setTimeout(() => router.replace(`/games/${id}`), 400);
+  const onFinish = useCallback(async () => {
+    await stopSegment();
+    router.replace(`/games/${id}`);
   }, [stopSegment, router, id]);
 
   const onClose = useCallback(() => {
@@ -260,23 +250,7 @@ export default function RecordScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
-      {isWeb ? (
-        <View style={[StyleSheet.absoluteFill, styles.webBackdrop]}>
-          <Text style={styles.webBackdropIcon}>🎥</Text>
-          <Text style={styles.webBackdropText}>
-            Practice mode — try the stat buttons below.{'\n'}Live video recording
-            works in the phone app.
-          </Text>
-        </View>
-      ) : (
-        <CameraView
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          mode="video"
-          facing="back"
-          onCameraReady={() => setCameraReady(true)}
-        />
-      )}
+      <CameraRecorder ref={recorderRef} onReady={() => setCameraReady(true)} />
 
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: insets.top + spacing.sm }]}>
@@ -356,8 +330,8 @@ export default function RecordScreen() {
             <Pressable
               accessibilityLabel={started ? 'Resume recording' : 'Start recording'}
               onPress={startSegment}
-              disabled={(!isWeb && !cameraReady) || saving}
-              style={[styles.recordBtn, ((!isWeb && !cameraReady) || saving) && styles.shotBtnDisabled]}
+              disabled={!cameraReady || saving}
+              style={[styles.recordBtn, (!cameraReady || saving) && styles.shotBtnDisabled]}
             >
               <View style={styles.recordInner} />
             </Pressable>
@@ -380,19 +354,6 @@ export default function RecordScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.dark },
-  webBackdrop: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.xl,
-    backgroundColor: colors.dark,
-  },
-  webBackdropIcon: { fontSize: 56, marginBottom: spacing.md },
-  webBackdropText: {
-    color: '#CBD5E1',
-    fontSize: font.body,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
   center: {
     flex: 1,
     backgroundColor: colors.dark,
