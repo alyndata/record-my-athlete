@@ -87,3 +87,63 @@ export async function persistVideo(sourceUri: string): Promise<string> {
     return sourceUri;
   }
 }
+
+/** Read the underlying Blob for a stored or remote video URI. */
+async function getBlob(uri: string): Promise<Blob | null> {
+  if (!uri) return null;
+  if (uri.startsWith('idb:')) {
+    const id = uri.slice(4);
+    try {
+      const db = await getDb();
+      return await new Promise<Blob | null>((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readonly');
+        const rq = tx.objectStore(STORE).get(id);
+        rq.onsuccess = () => resolve((rq.result as Blob) ?? null);
+        rq.onerror = () => reject(rq.error);
+      });
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const resp = await fetch(uri);
+    return await resp.blob();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hand a video to the OS: on iOS/Android this opens the native share sheet
+ * (Save to Photos / Files); elsewhere it falls back to a file download.
+ */
+export async function shareVideo(uri: string, filename: string): Promise<void> {
+  const blob = await getBlob(uri);
+  if (!blob) return;
+  const type = blob.type || 'video/mp4';
+  const name = type.includes('webm') ? filename.replace(/\.\w+$/, '') + '.webm' : filename;
+  const file = new File([blob], name, { type });
+
+  const nav = navigator as Navigator & {
+    canShare?: (d: { files: File[] }) => boolean;
+    share?: (d: { files: File[]; title?: string }) => Promise<void>;
+  };
+  if (nav.share && nav.canShare && nav.canShare({ files: [file] })) {
+    try {
+      await nav.share({ files: [file], title: filename });
+      return;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return; // user dismissed the sheet
+    }
+  }
+
+  // Fallback: trigger a download.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
