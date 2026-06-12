@@ -51,3 +51,13 @@ export async function resolveVideoUri(uri: string): Promise<string> {
 export async function shareVideo(_uri: string, _filename: string): Promise<void> {
   // No-op on native for now; the Save/Share button is web-only.
 }
+
+/** Per-clip export is web-only for now (in-browser trimming). */
+export async function shareClip(
+  _uri: string,
+  _startMs: number,
+  _endMs: number,
+  _filename: string
+): Promise<boolean> {
+  return false;
+}

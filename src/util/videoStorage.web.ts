@@ -117,9 +117,7 @@ async function getBlob(uri: string): Promise<Blob | null> {
  * Hand a video to the OS: on iOS/Android this opens the native share sheet
  * (Save to Photos / Files); elsewhere it falls back to a file download.
  */
-export async function shareVideo(uri: string, filename: string): Promise<void> {
-  const blob = await getBlob(uri);
-  if (!blob) return;
+async function shareBlob(blob: Blob, filename: string): Promise<void> {
   const type = blob.type || 'video/mp4';
   const name = type.includes('webm') ? filename.replace(/\.\w+$/, '') + '.webm' : filename;
   const file = new File([blob], name, { type });
@@ -146,4 +144,100 @@ export async function shareVideo(uri: string, filename: string): Promise<void> {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+export async function shareVideo(uri: string, filename: string): Promise<void> {
+  const blob = await getBlob(uri);
+  if (!blob) return;
+  await shareBlob(blob, filename);
+}
+
+// --- In-browser clip trimming (ffmpeg.wasm, loaded on demand) -------------
+//
+// We trim the highlight out of the full recording entirely in the browser so
+// nothing is uploaded anywhere. ffmpeg is loaded from a CDN the first time a
+// clip is exported (a one-time download, then cached by the browser) and is
+// deliberately kept out of the app bundle. The single-threaded core is used
+// so it works without cross-origin isolation (which GitHub Pages can't set).
+// If anything in this path fails — unsupported browser, memory, network — the
+// caller falls back to sharing the full video.
+
+const FFMPEG_ESM = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm';
+const FFMPEG_UTIL_ESM = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm';
+const CORE_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+
+// Runtime dynamic import so the bundler never tries to resolve the CDN URL.
+const dynamicImport = new Function('u', 'return import(u)') as (u: string) => Promise<any>;
+
+let ffmpegPromise: Promise<any> | null = null;
+
+async function loadFFmpeg(): Promise<any> {
+  if (!ffmpegPromise) {
+    ffmpegPromise = (async () => {
+      const [{ FFmpeg }, { toBlobURL }] = await Promise.all([
+        dynamicImport(FFMPEG_ESM),
+        dynamicImport(FFMPEG_UTIL_ESM),
+      ]);
+      const ffmpeg = new FFmpeg();
+      await ffmpeg.load({
+        coreURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+      return ffmpeg;
+    })().catch((err) => {
+      ffmpegPromise = null; // allow a later retry
+      throw err;
+    });
+  }
+  return ffmpegPromise;
+}
+
+/** Trim [startMs, endMs] out of a video Blob without re-encoding. */
+async function trimBlob(blob: Blob, startMs: number, endMs: number): Promise<Blob> {
+  const ffmpeg = await loadFFmpeg();
+  const isWebm = (blob.type || '').includes('webm');
+  const ext = isWebm ? 'webm' : 'mp4';
+  const input = `in.${ext}`;
+  const output = `out.${ext}`;
+  const start = Math.max(0, startMs / 1000);
+  const dur = Math.max(0.1, (endMs - startMs) / 1000);
+
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  await ffmpeg.writeFile(input, buf);
+  try {
+    // Seek before -i and copy streams: fast, no re-encode. Cuts snap to the
+    // nearest keyframe, which is fine for highlight clips.
+    await ffmpeg.exec(['-ss', String(start), '-t', String(dur), '-i', input, '-c', 'copy', '-y', output]);
+    const data = (await ffmpeg.readFile(output)) as Uint8Array;
+    if (!data || data.length === 0) throw new Error('empty clip output');
+    return new Blob([data.buffer], { type: isWebm ? 'video/webm' : 'video/mp4' });
+  } finally {
+    ffmpeg.deleteFile(input).catch(() => {});
+    ffmpeg.deleteFile(output).catch(() => {});
+  }
+}
+
+/**
+ * Export a single highlight: trims [startMs, endMs] from the source video in
+ * the browser, then hands the clip to the share sheet / download. Falls back
+ * to sharing the full video if trimming isn't possible. Resolves to true when
+ * a trimmed clip was produced, false when it fell back to the full video.
+ */
+export async function shareClip(
+  uri: string,
+  startMs: number,
+  endMs: number,
+  filename: string
+): Promise<boolean> {
+  const blob = await getBlob(uri);
+  if (!blob) return false;
+  try {
+    const clip = await trimBlob(blob, startMs, endMs);
+    await shareBlob(clip, filename);
+    return true;
+  } catch (err) {
+    console.warn('shareClip: trimming failed, sharing full video', err);
+    await shareBlob(blob, filename);
+    return false;
+  }
 }

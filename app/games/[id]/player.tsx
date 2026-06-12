@@ -10,7 +10,7 @@ import { useClip, useVideo } from '../../../src/store/selectors';
 import { Clip, Video } from '../../../src/store/types';
 import { colors, font, radius, spacing } from '../../../src/theme';
 import { formatDuration } from '../../../src/util/format';
-import { resolveVideoUri, shareVideo } from '../../../src/util/videoStorage';
+import { resolveVideoUri, shareClip, shareVideo } from '../../../src/util/videoStorage';
 
 export default function PlayerScreen() {
   const { clipId, videoId } = useLocalSearchParams<{ clipId?: string; videoId?: string }>();
@@ -83,6 +83,8 @@ function PlayerInner({
 
   const seekedRef = useRef(false);
   const [creating, setCreating] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
 
   const player = useVideoPlayer(uri || null, (p) => {
     p.timeUpdateEventInterval = 0.25;
@@ -120,6 +122,23 @@ function PlayerInner({
     if (!player) return;
     player.currentTime = startSec;
     player.play();
+  };
+
+  const exportClip = async () => {
+    if (!clip || exporting) return;
+    setExporting(true);
+    setExportNote('Trimming clip… (first time downloads a video tool)');
+    const name = `${(clip.label ?? 'Highlight').replace(/[^\w-]+/g, '_')}.mp4`;
+    try {
+      const trimmed = await shareClip(video.uri, clip.startMs, clip.endMs, name);
+      setExportNote(
+        trimmed ? null : "Couldn't trim in this browser — shared the full video instead."
+      );
+    } catch {
+      setExportNote('Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const clipThisMoment = () => {
@@ -192,6 +211,14 @@ function PlayerInner({
                 onPress={() => updateClip(clip.id, { watched: !clip.watched })}
               />
             </View>
+            {canShare ? (
+              <Button
+                title={exporting ? 'Preparing clip…' : '⬆︎ Save / Share clip'}
+                onPress={exportClip}
+                disabled={exporting || missingFile}
+              />
+            ) : null}
+            {exportNote ? <Text style={styles.note}>{exportNote}</Text> : null}
           </>
         ) : (
           <>
@@ -209,7 +236,7 @@ function PlayerInner({
           </>
         )}
 
-        {canShare ? (
+        {canShare && !clip ? (
           <Button
             title="⬆︎ Save / Share video"
             variant="secondary"
@@ -236,6 +263,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: font.h2, fontWeight: '800', color: colors.text },
   meta: { fontSize: font.small, color: colors.muted, lineHeight: 20 },
+  note: { fontSize: font.small, color: colors.muted, lineHeight: 18, fontStyle: 'italic' },
   row: { flexDirection: 'row', gap: spacing.md },
   back: { alignItems: 'center', paddingVertical: spacing.sm },
   backText: { color: colors.primary, fontWeight: '700', fontSize: font.body },
