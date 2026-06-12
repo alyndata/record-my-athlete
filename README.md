@@ -58,6 +58,53 @@ Type-check the project with:
 npm run typecheck
 ```
 
+## Building a standalone app (EAS Build)
+
+To get a real app you install on your phone once (no computer tethered, and the
+path toward TestFlight / the stores), use **EAS Build** — Expo's free cloud
+build service. Profiles are configured in `eas.json`:
+
+| Profile | Use it for |
+| --- | --- |
+| `development` | Iterating with a custom dev client (`developmentClient`). |
+| `preview` | An installable build to put on your own phone (Android `.apk`, iOS ad-hoc). |
+| `production` | Store-ready build (App Store / Play Store). |
+
+### First-time setup
+
+```bash
+npm install -g eas-cli      # the EAS command-line tool
+eas login                   # create / sign in to a free Expo account
+eas init                    # links this repo to an Expo project (writes the project id into app.json)
+```
+
+### Android — the easiest path (no paid account)
+
+```bash
+eas build --platform android --profile preview
+```
+
+When it finishes, EAS gives you a link to download an **`.apk`**. Open that link
+on your Android phone and install it — done. No developer account needed.
+
+### iPhone — requires an Apple Developer account ($99/yr)
+
+```bash
+eas build --platform ios --profile preview
+```
+
+EAS walks you through Apple signing. For an iPhone you then either:
+- register your device and install the ad-hoc build, or
+- submit to **TestFlight** for easy install + sharing with other parents:
+
+```bash
+eas submit --platform ios --profile production
+```
+
+> `eas build` runs in the cloud, so you don't need Xcode or Android Studio
+> locally. The only paid piece is Apple's developer program for iPhone installs;
+> Android is free.
+
 ## Project structure
 
 ```
