@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../../src/components/Button';
 import { EmptyState } from '../../../src/components/EmptyState';
@@ -10,7 +10,7 @@ import { useClip, useVideo } from '../../../src/store/selectors';
 import { Clip, Video } from '../../../src/store/types';
 import { colors, font, radius, spacing } from '../../../src/theme';
 import { formatDuration } from '../../../src/util/format';
-import { resolveVideoUri } from '../../../src/util/videoStorage';
+import { resolveVideoUri, shareVideo } from '../../../src/util/videoStorage';
 
 export default function PlayerScreen() {
   const { clipId, videoId } = useLocalSearchParams<{ clipId?: string; videoId?: string }>();
@@ -149,6 +149,7 @@ function PlayerInner({
   }, [clip, directVideo]);
 
   const missingFile = !uri;
+  const canShare = Platform.OS === 'web' && !missingFile;
 
   return (
     <View style={styles.container}>
@@ -207,6 +208,14 @@ function PlayerInner({
             </Pressable>
           </>
         )}
+
+        {canShare ? (
+          <Button
+            title="⬆︎ Save / Share video"
+            variant="secondary"
+            onPress={() => shareVideo(video.uri, `${(title || 'game').replace(/[^\w-]+/g, '_')}.mp4`)}
+          />
+        ) : null}
       </View>
     </View>
   );
