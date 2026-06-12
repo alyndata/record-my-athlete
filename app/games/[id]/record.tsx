@@ -1,9 +1,10 @@
-import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -11,14 +12,17 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../../src/components/Button';
+import {
+  CameraRecorder,
+  CameraRecorderHandle,
+} from '../../../src/components/CameraRecorder';
 import { computeStats } from '../../../src/domain/stats';
-import { SHOT_KINDS } from '../../../src/domain/statTypes';
+import { COUNTER_STATS, SHOT_KINDS } from '../../../src/domain/statTypes';
 import { useStore } from '../../../src/store/StoreContext';
 import { useGame } from '../../../src/store/selectors';
 import { StatType } from '../../../src/store/types';
 import { colors, font, radius, spacing } from '../../../src/theme';
 import { formatDuration } from '../../../src/util/format';
-import { persistVideo } from '../../../src/util/videoStorage';
 
 interface BufferedStat {
   type: StatType;
@@ -39,8 +43,11 @@ export default function RecordScreen() {
   const [cameraPerm, requestCameraPerm] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
 
-  const cameraRef = useRef<CameraView>(null);
+  const recorderRef = useRef<CameraRecorderHandle>(null);
   const [cameraReady, setCameraReady] = useState(false);
+
+  // Native gates on camera/mic permission; web prompts inside the recorder.
+  const isWeb = Platform.OS === 'web';
 
   // "recording" = a segment is actively capturing.
   const [recording, setRecording] = useState(false);
@@ -85,17 +92,15 @@ export default function RecordScreen() {
 
   /** Persist a finished segment plus its buffered stats and favorite clips. */
   const finalizeSegment = useCallback(
-    async (uri: string) => {
-      const durationMs = Math.max(0, Date.now() - segmentStartRef.current);
+    async (uri: string | null, durationMs: number) => {
       const stats = [...statBufferRef.current];
       const favs = [...favBufferRef.current];
       statBufferRef.current = [];
       favBufferRef.current = [];
 
-      const storedUri = await persistVideo(uri);
       const video = addVideo({
         gameId: id,
-        uri: storedUri,
+        uri: uri ?? '',
         durationMs,
         source: 'recorded',
       });
@@ -123,7 +128,7 @@ export default function RecordScreen() {
 
   /** Begin a new recording segment. */
   const startSegment = useCallback(async () => {
-    if (recordingRef.current || !cameraRef.current) return;
+    if (recordingRef.current) return;
     recordingRef.current = true;
     segmentStartRef.current = Date.now();
     setRecording(true);
@@ -135,29 +140,33 @@ export default function RecordScreen() {
     }, 250);
 
     try {
-      const result = await cameraRef.current.recordAsync();
-      // recordAsync resolves once stopRecording() is called.
-      if (result?.uri) {
-        setSaving(true);
-        await finalizeSegment(result.uri);
-        setSaving(false);
-      }
+      await recorderRef.current?.startRecording();
     } catch (err) {
-      console.warn('recordAsync failed', err);
-      Alert.alert('Recording error', 'Something went wrong while recording.');
-      setSaving(false);
-    } finally {
+      console.warn('startRecording failed', err);
+      Alert.alert('Recording error', 'Could not start recording.');
+      stopTimer();
+      setRecording(false);
       recordingRef.current = false;
     }
-  }, [finalizeSegment, stopTimer]);
+  }, [stopTimer]);
 
   /** Stop the active segment (it gets saved); used for both pause and finish. */
-  const stopSegment = useCallback(() => {
+  const stopSegment = useCallback(async () => {
     if (!recordingRef.current) return;
+    const durationMs = Math.max(0, Date.now() - segmentStartRef.current);
     stopTimer();
     setRecording(false);
-    cameraRef.current?.stopRecording();
-  }, [stopTimer]);
+    recordingRef.current = false;
+    setSaving(true);
+    try {
+      const uri = (await recorderRef.current?.stopRecording()) ?? null;
+      await finalizeSegment(uri, durationMs);
+    } catch (err) {
+      console.warn('stopRecording failed', err);
+    } finally {
+      setSaving(false);
+    }
+  }, [stopTimer, finalizeSegment]);
 
   const onTagStat = useCallback(
     (type: StatType, label: string) => {
@@ -180,10 +189,9 @@ export default function RecordScreen() {
     flashLabel('★ Highlight saved');
   }, [flashLabel]);
 
-  const onFinish = useCallback(() => {
-    stopSegment();
-    // Give the segment a moment to flush before leaving.
-    setTimeout(() => router.replace(`/games/${id}`), 400);
+  const onFinish = useCallback(async () => {
+    await stopSegment();
+    router.replace(`/games/${id}`);
   }, [stopSegment, router, id]);
 
   const onClose = useCallback(() => {
@@ -197,8 +205,8 @@ export default function RecordScreen() {
     }
   }, [started, onFinish, router]);
 
-  // --- Permission gates ---------------------------------------------------
-  if (!cameraPerm || !micPerm) {
+  // --- Permission gates (native only; web runs in practice mode) ----------
+  if (!isWeb && (!cameraPerm || !micPerm)) {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={colors.white} />
@@ -206,7 +214,7 @@ export default function RecordScreen() {
     );
   }
 
-  if (!cameraPerm.granted || !micPerm.granted) {
+  if (!isWeb && (!cameraPerm!.granted || !micPerm!.granted)) {
     return (
       <View style={styles.center}>
         <Text style={styles.permTitle}>Camera & microphone access</Text>
@@ -216,8 +224,8 @@ export default function RecordScreen() {
         <Button
           title="Grant access"
           onPress={async () => {
-            if (!cameraPerm.granted) await requestCameraPerm();
-            if (!micPerm.granted) await requestMicPerm();
+            if (!cameraPerm?.granted) await requestCameraPerm();
+            if (!micPerm?.granted) await requestMicPerm();
           }}
           style={{ marginTop: spacing.lg, minWidth: 200 }}
         />
@@ -242,13 +250,7 @@ export default function RecordScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        mode="video"
-        facing="back"
-        onCameraReady={() => setCameraReady(true)}
-      />
+      <CameraRecorder ref={recorderRef} onReady={() => setCameraReady(true)} />
 
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: insets.top + spacing.sm }]}>
@@ -302,6 +304,19 @@ export default function RecordScreen() {
           ))}
         </View>
 
+        <View style={styles.counterRow}>
+          {COUNTER_STATS.map((c) => (
+            <Pressable
+              key={c.type}
+              disabled={!recording}
+              onPress={() => onTagStat(c.type, `+1 ${c.label}`)}
+              style={[styles.counterBtn, !recording && styles.shotBtnDisabled]}
+            >
+              <Text style={styles.counterBtnText}>+1 {c.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+
         <Pressable
           disabled={!recording}
           onPress={onFavorite}
@@ -313,6 +328,7 @@ export default function RecordScreen() {
         <View style={styles.controls}>
           {!recording ? (
             <Pressable
+              accessibilityLabel={started ? 'Resume recording' : 'Start recording'}
               onPress={startSegment}
               disabled={!cameraReady || saving}
               style={[styles.recordBtn, (!cameraReady || saving) && styles.shotBtnDisabled]}
@@ -320,7 +336,7 @@ export default function RecordScreen() {
               <View style={styles.recordInner} />
             </Pressable>
           ) : (
-            <Pressable onPress={stopSegment} style={styles.pauseBtn}>
+            <Pressable accessibilityLabel="Pause recording" onPress={stopSegment} style={styles.pauseBtn}>
               <View style={styles.pauseInner} />
             </Pressable>
           )}
@@ -437,6 +453,16 @@ const styles = StyleSheet.create({
   missBtn: { backgroundColor: colors.danger },
   shotBtnDisabled: { opacity: 0.4 },
   shotBtnText: { color: colors.white, fontWeight: '800', fontSize: font.body },
+
+  counterRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  counterBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    backgroundColor: '#2563EB',
+  },
+  counterBtnText: { color: colors.white, fontWeight: '800', fontSize: font.body },
 
   favBtn: {
     marginTop: spacing.sm,

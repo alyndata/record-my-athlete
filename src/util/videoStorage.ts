@@ -41,3 +41,13 @@ export async function deleteVideoFile(uri: string): Promise<void> {
     console.warn('deleteVideoFile failed', err);
   }
 }
+
+/** On native a local file URI is already playable; nothing to resolve. */
+export async function resolveVideoUri(uri: string): Promise<string> {
+  return uri;
+}
+
+/** Native sharing is handled by the OS share sheet in a future build. */
+export async function shareVideo(_uri: string, _filename: string): Promise<void> {
+  // No-op on native for now; the Save/Share button is web-only.
+}

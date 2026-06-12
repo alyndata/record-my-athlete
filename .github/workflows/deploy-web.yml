@@ -1,24 +1,23 @@
 name: Deploy Web
 
-# Publishes the web build to GitHub Pages so it can be opened in any browser
-# (including an iPad). Runs on every push to main and can be run manually.
+# Builds the web app and publishes it to the gh-pages branch, which GitHub
+# Pages serves at https://alyndata.github.io/record-my-athlete/.
+# (Branch-based Pages avoids the Actions "github-pages" environment gate.)
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: deploy-web
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build web
+  deploy:
+    name: Build & publish web
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,31 +35,13 @@ jobs:
       - name: Export web build
         run: npx expo export --platform web
 
-      - name: Add SPA + Pages files
-        run: |
-          # Jekyll-off so files starting with _ (e.g. _expo) are served.
-          touch dist/.nojekyll
-          # SPA fallback so client-side routes (e.g. /games/...) load.
-          cp dist/index.html dist/404.html
+      - name: SPA fallback
+        run: cp dist/index.html dist/404.html
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          enablement: true
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    name: Deploy to Pages
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          # Keep _expo/ assets servable (disables Jekyll, writes .nojekyll).
+          enable_jekyll: false
