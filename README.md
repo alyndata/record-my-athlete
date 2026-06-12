@@ -105,6 +105,32 @@ eas submit --platform ios --profile production
 > locally. The only paid piece is Apple's developer program for iPhone installs;
 > Android is free.
 
+## Building from GitHub (no local terminal)
+
+There's a **“EAS Build”** GitHub Action (`.github/workflows/eas-build.yml`) so you
+can trigger cloud builds from the repo's **Actions** tab — even from a phone or
+iPad — without running anything locally.
+
+**One-time bootstrap (only you can do these — they need your accounts):**
+
+1. **Create a free Expo account** at [expo.dev](https://expo.dev).
+2. **Link the project once.** In a terminal on any computer, run
+   `npx eas-cli login` then `npx eas-cli init`. This writes your `owner` and
+   `extra.eas.projectId` into `app.json` — commit that change.
+   *(Prefer not to touch a terminal? Create the project at expo.dev, then send me
+   your Expo username + the project ID and I'll wire `app.json` for you.)*
+3. **Add an access token to GitHub.** On expo.dev → **Account settings → Access
+   tokens**, create a token. In GitHub → **Settings → Secrets and variables →
+   Actions → New repository secret**, name it **`EXPO_TOKEN`** and paste the token.
+
+**Running a build from then on:**
+
+GitHub → **Actions** → **EAS Build** → **Run workflow** → pick the platform
+(`ios` / `android` / `all`) and profile (`preview` / `production`). The build runs
+on Expo's servers; when it's done you'll get a link on
+[expo.dev](https://expo.dev) to download the app (Android `.apk`) or install via
+TestFlight (iOS).
+
 ## Project structure
 
 ```
