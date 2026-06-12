@@ -62,7 +62,8 @@
       "expo-video"
     ],
     "experiments": {
-      "typedRoutes": false
+      "typedRoutes": false,
+      "baseUrl": "/record-my-athlete"
     },
     "extra": {
       "eas": {
