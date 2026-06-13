@@ -5,9 +5,11 @@ import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from '
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../../src/components/Button';
 import { EmptyState } from '../../../src/components/EmptyState';
+import { computeStats } from '../../../src/domain/stats';
+import { COUNTER_STATS, SHOT_KINDS } from '../../../src/domain/statTypes';
 import { useStore } from '../../../src/store/StoreContext';
 import { useClip, useVideo } from '../../../src/store/selectors';
-import { Clip, Video } from '../../../src/store/types';
+import { Clip, StatType, Video } from '../../../src/store/types';
 import { colors, font, radius, spacing } from '../../../src/theme';
 import { formatDuration } from '../../../src/util/format';
 import { resolveVideoUri, shareClip, shareVideo } from '../../../src/util/videoStorage';
@@ -76,7 +78,7 @@ function PlayerInner({
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { data, addClip, updateClip } = useStore();
+  const { data, addClip, updateClip, addStatEvent, deleteStatEvent } = useStore();
 
   const startSec = clip ? clip.startMs / 1000 : 0;
   const endSec = clip ? clip.endMs / 1000 : undefined;
@@ -85,6 +87,17 @@ function PlayerInner({
   const [creating, setCreating] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState<string | null>(null);
+
+  // Stat tagging while watching (full-video view).
+  const [tracking, setTracking] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [lastEventId, setLastEventId] = useState<string | null>(null);
+
+  // Live tally of stats already tagged on this video.
+  const videoStats = useMemo(
+    () => computeStats(data.statEvents.filter((e) => e.videoId === video.id)),
+    [data.statEvents, video.id],
+  );
 
   const player = useVideoPlayer(uri || null, (p) => {
     p.timeUpdateEventInterval = 0.25;
@@ -141,6 +154,27 @@ function PlayerInner({
     }
   };
 
+  const flashLabel = (text: string) => {
+    setFlash(text);
+    setTimeout(() => setFlash((cur) => (cur === text ? null : cur)), 900);
+  };
+
+  const tagStat = (type: StatType, label: string) => {
+    const timeMs = Math.max(0, (player?.currentTime ?? 0) * 1000);
+    // Pause so you can tag precisely; resume with the video's play control.
+    player?.pause();
+    const ev = addStatEvent({ gameId: video.gameId, videoId: video.id, type, videoTimeMs: timeMs });
+    setLastEventId(ev.id);
+    flashLabel(label);
+  };
+
+  const undoLastStat = () => {
+    if (!lastEventId) return;
+    deleteStatEvent(lastEventId);
+    setLastEventId(null);
+    flashLabel('Removed last stat');
+  };
+
   const clipThisMoment = () => {
     if (!player) return;
     setCreating(true);
@@ -170,6 +204,64 @@ function PlayerInner({
   const missingFile = !uri;
   const canShare = Platform.OS === 'web' && !missingFile;
 
+  const trackToggle = (
+    <Button
+      title={tracking ? 'Hide stats' : '📊 Track stats'}
+      variant="secondary"
+      style={{ flex: 1 }}
+      onPress={() => setTracking((t) => !t)}
+      disabled={missingFile}
+    />
+  );
+
+  const trackerPad = tracking ? (
+    <View style={styles.tracker}>
+      <View style={styles.trackerHead}>
+        <Text style={styles.tally}>
+          {videoStats.points} pts · {videoStats.rebounds} reb · {videoStats.assists} ast
+        </Text>
+        {lastEventId ? (
+          <Pressable onPress={undoLastStat} hitSlop={8}>
+            <Text style={styles.undo}>↶ Undo</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <Text style={styles.trackerHint}>
+        Tagging pauses the video at that moment — press play to keep watching.
+      </Text>
+
+      {SHOT_KINDS.map((kind) => (
+        <View key={kind.key} style={styles.shotRow}>
+          <Text style={styles.shotLabel}>{kind.short}</Text>
+          <Pressable
+            onPress={() => tagStat(kind.madeType, `✓ Made ${kind.short}`)}
+            style={[styles.shotBtn, styles.madeBtn]}
+          >
+            <Text style={styles.shotBtnText}>✓ Made</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => tagStat(kind.missedType, `✗ Missed ${kind.short}`)}
+            style={[styles.shotBtn, styles.missBtn]}
+          >
+            <Text style={styles.shotBtnText}>✗ Miss</Text>
+          </Pressable>
+        </View>
+      ))}
+
+      <View style={styles.counterRow}>
+        {COUNTER_STATS.map((c) => (
+          <Pressable
+            key={c.type}
+            onPress={() => tagStat(c.type, `+1 ${c.label}`)}
+            style={styles.counterBtn}
+          >
+            <Text style={styles.counterBtnText}>+1 {c.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  ) : null;
+
   return (
     <View style={styles.container}>
       <View style={styles.videoWrap}>
@@ -186,6 +278,11 @@ function PlayerInner({
             nativeControls
           />
         )}
+        {flash ? (
+          <View style={styles.flashWrap} pointerEvents="none">
+            <Text style={styles.flashText}>{flash}</Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={[styles.panel, { paddingBottom: insets.bottom + spacing.lg }]}>
@@ -219,17 +316,27 @@ function PlayerInner({
               />
             ) : null}
             {exportNote ? <Text style={styles.note}>{exportNote}</Text> : null}
+            {trackToggle}
+            {trackerPad}
           </>
         ) : (
           <>
             <Text style={styles.meta}>
-              Watching the full video. Pause where your athlete shines and save a highlight.
+              Watching the full video. Tag stats as you watch, and save the best moments.
             </Text>
-            <Button
-              title={creating ? '★ Saved!' : '★ Clip this moment'}
-              onPress={clipThisMoment}
-              disabled={creating || missingFile}
-            />
+
+            <View style={styles.row}>
+              <Button
+                title={creating ? '★ Saved!' : '★ Clip this moment'}
+                style={{ flex: 1 }}
+                onPress={clipThisMoment}
+                disabled={creating || missingFile}
+              />
+              {trackToggle}
+            </View>
+
+            {trackerPad}
+
             <Pressable onPress={() => router.back()} style={styles.back}>
               <Text style={styles.backText}>Done</Text>
             </Pressable>
@@ -267,4 +374,37 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: spacing.md },
   back: { alignItems: 'center', paddingVertical: spacing.sm },
   backText: { color: colors.primary, fontWeight: '700', fontSize: font.body },
+
+  flashWrap: { position: 'absolute', top: '42%', left: 0, right: 0, alignItems: 'center' },
+  flashText: {
+    color: colors.white,
+    fontSize: font.h3,
+    fontWeight: '800',
+    backgroundColor: colors.overlay,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+  },
+
+  tracker: { gap: spacing.sm },
+  trackerHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  tally: { color: colors.text, fontWeight: '800', fontSize: font.body },
+  undo: { color: colors.primary, fontWeight: '700', fontSize: font.small },
+  trackerHint: { color: colors.muted, fontSize: font.small, marginBottom: spacing.xs },
+  shotRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  shotLabel: { width: 40, color: colors.text, fontWeight: '800', fontSize: font.body },
+  shotBtn: { flex: 1, paddingVertical: spacing.md, borderRadius: radius.md, alignItems: 'center' },
+  madeBtn: { backgroundColor: colors.success },
+  missBtn: { backgroundColor: colors.danger },
+  shotBtnText: { color: colors.white, fontWeight: '800', fontSize: font.body },
+  counterRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  counterBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    backgroundColor: '#2563EB',
+  },
+  counterBtnText: { color: colors.white, fontWeight: '800', fontSize: font.body },
 });
