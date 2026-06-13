@@ -161,6 +161,8 @@ function PlayerInner({
 
   const tagStat = (type: StatType, label: string) => {
     const timeMs = Math.max(0, (player?.currentTime ?? 0) * 1000);
+    // Pause so you can tag precisely; resume with the video's play control.
+    player?.pause();
     const ev = addStatEvent({ gameId: video.gameId, videoId: video.id, type, videoTimeMs: timeMs });
     setLastEventId(ev.id);
     flashLabel(label);
@@ -224,7 +226,9 @@ function PlayerInner({
           </Pressable>
         ) : null}
       </View>
-      <Text style={styles.trackerHint}>Stats are tagged at the current spot in the video.</Text>
+      <Text style={styles.trackerHint}>
+        Tagging pauses the video at that moment — press play to keep watching.
+      </Text>
 
       {SHOT_KINDS.map((kind) => (
         <View key={kind.key} style={styles.shotRow}>
