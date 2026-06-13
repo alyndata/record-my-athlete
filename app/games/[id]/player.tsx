@@ -202,6 +202,62 @@ function PlayerInner({
   const missingFile = !uri;
   const canShare = Platform.OS === 'web' && !missingFile;
 
+  const trackToggle = (
+    <Button
+      title={tracking ? 'Hide stats' : '📊 Track stats'}
+      variant="secondary"
+      style={{ flex: 1 }}
+      onPress={() => setTracking((t) => !t)}
+      disabled={missingFile}
+    />
+  );
+
+  const trackerPad = tracking ? (
+    <View style={styles.tracker}>
+      <View style={styles.trackerHead}>
+        <Text style={styles.tally}>
+          {videoStats.points} pts · {videoStats.rebounds} reb · {videoStats.assists} ast
+        </Text>
+        {lastEventId ? (
+          <Pressable onPress={undoLastStat} hitSlop={8}>
+            <Text style={styles.undo}>↶ Undo</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <Text style={styles.trackerHint}>Stats are tagged at the current spot in the video.</Text>
+
+      {SHOT_KINDS.map((kind) => (
+        <View key={kind.key} style={styles.shotRow}>
+          <Text style={styles.shotLabel}>{kind.short}</Text>
+          <Pressable
+            onPress={() => tagStat(kind.madeType, `✓ Made ${kind.short}`)}
+            style={[styles.shotBtn, styles.madeBtn]}
+          >
+            <Text style={styles.shotBtnText}>✓ Made</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => tagStat(kind.missedType, `✗ Missed ${kind.short}`)}
+            style={[styles.shotBtn, styles.missBtn]}
+          >
+            <Text style={styles.shotBtnText}>✗ Miss</Text>
+          </Pressable>
+        </View>
+      ))}
+
+      <View style={styles.counterRow}>
+        {COUNTER_STATS.map((c) => (
+          <Pressable
+            key={c.type}
+            onPress={() => tagStat(c.type, `+1 ${c.label}`)}
+            style={styles.counterBtn}
+          >
+            <Text style={styles.counterBtnText}>+1 {c.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  ) : null;
+
   return (
     <View style={styles.container}>
       <View style={styles.videoWrap}>
@@ -256,6 +312,8 @@ function PlayerInner({
               />
             ) : null}
             {exportNote ? <Text style={styles.note}>{exportNote}</Text> : null}
+            {trackToggle}
+            {trackerPad}
           </>
         ) : (
           <>
@@ -270,62 +328,10 @@ function PlayerInner({
                 onPress={clipThisMoment}
                 disabled={creating || missingFile}
               />
-              <Button
-                title={tracking ? 'Hide stats' : '📊 Track stats'}
-                variant="secondary"
-                style={{ flex: 1 }}
-                onPress={() => setTracking((t) => !t)}
-                disabled={missingFile}
-              />
+              {trackToggle}
             </View>
 
-            {tracking ? (
-              <View style={styles.tracker}>
-                <View style={styles.trackerHead}>
-                  <Text style={styles.tally}>
-                    {videoStats.points} pts · {videoStats.rebounds} reb · {videoStats.assists} ast
-                  </Text>
-                  {lastEventId ? (
-                    <Pressable onPress={undoLastStat} hitSlop={8}>
-                      <Text style={styles.undo}>↶ Undo</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-                <Text style={styles.trackerHint}>
-                  Stats are tagged at the current spot in the video.
-                </Text>
-
-                {SHOT_KINDS.map((kind) => (
-                  <View key={kind.key} style={styles.shotRow}>
-                    <Text style={styles.shotLabel}>{kind.short}</Text>
-                    <Pressable
-                      onPress={() => tagStat(kind.madeType, `✓ Made ${kind.short}`)}
-                      style={[styles.shotBtn, styles.madeBtn]}
-                    >
-                      <Text style={styles.shotBtnText}>✓ Made</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => tagStat(kind.missedType, `✗ Missed ${kind.short}`)}
-                      style={[styles.shotBtn, styles.missBtn]}
-                    >
-                      <Text style={styles.shotBtnText}>✗ Miss</Text>
-                    </Pressable>
-                  </View>
-                ))}
-
-                <View style={styles.counterRow}>
-                  {COUNTER_STATS.map((c) => (
-                    <Pressable
-                      key={c.type}
-                      onPress={() => tagStat(c.type, `+1 ${c.label}`)}
-                      style={styles.counterBtn}
-                    >
-                      <Text style={styles.counterBtnText}>+1 {c.label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            ) : null}
+            {trackerPad}
 
             <Pressable onPress={() => router.back()} style={styles.back}>
               <Text style={styles.backText}>Done</Text>
